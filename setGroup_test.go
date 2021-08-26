@@ -51,6 +51,16 @@ func BenchmarkMultiIntersectSetGroup(b *testing.B) {
 	}
 }
 
+func BenchmarkMultiUnionSetGroup(b *testing.B) {
+	setGroup := setGroup.New()
+	for n := 0; n < b.N; n++ {
+		setGroup.Union(getRandomString(20), getRandomString(20), getRandomString(20), getRandomString(20))
+	}
+}
 
-
-
+func BenchmarkMultiDifferentSetGroup(b *testing.B) {
+	setGroup := setGroup.New()
+	for n := 0; n < b.N; n++ {
+		setGroup.Different(getRandomString(20), getRandomString(20), getRandomString(20), getRandomString(20))
+	}
+}

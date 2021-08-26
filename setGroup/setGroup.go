@@ -154,7 +154,16 @@ func (setGroup *setGroup) Intersect(setKeys ...interface{}) []interface{} {
 
 	// iterate from minIterationsOffset to 0 find the intersection
 	for iter := minIterationsOffset - 1; iter >= 0; iter-- {
-		for bitMapIndex := 1023; bitMapIndex >= 0; bitMapIndex-- {
+		if setGroup.indexProduceCounter>>6>>10 < uint64(iter) {
+			continue
+		}
+		indexOffset := setGroup.indexProduceCounter - uint64(iter)<<10<<6
+		bitMapIndex := 1023
+		if indexOffset < 1<<10<<6 {
+			bitMapIndex = int(indexOffset)>>6 + 1
+		}
+
+		for ; bitMapIndex >= 0; bitMapIndex-- {
 			itemIterBitMap := uint64(math.MaxUint64)
 			for _, setMemberBitMap := range setKeysRelational {
 				itemIterBitMap &= setMemberBitMap[iter][bitMapIndex]
@@ -173,6 +182,119 @@ func (setGroup *setGroup) Intersect(setKeys ...interface{}) []interface{} {
 	}
 
 	return intersectResult
+}
+
+// Union calculation a group set union
+func (setGroup *setGroup) Union(setKeys ...interface{}) []interface{} {
+	setGroup.mutex.RLock()
+	defer setGroup.mutex.RUnlock()
+
+	setKeysLen := len(setKeys)
+	setKeysRelational := make([][][1024]uint64, setKeysLen)
+	maxIterationsOffset := 0
+	for setKeyIndex, setKey := range setKeys {
+		// judgment the set exists, if not, return []interface{}{}
+		setMemberBitMap, setExist := setGroup.groupSetRelationalMap[setKey]
+		if !setExist || setMemberBitMap == nil || len(setMemberBitMap) == 0 {
+			continue
+		}
+		if len(setMemberBitMap) > maxIterationsOffset {
+			maxIterationsOffset = len(setMemberBitMap)
+		}
+		setKeysRelational[setKeyIndex] = setMemberBitMap
+	}
+
+	var unionResult []interface{}
+	// iterate from maxIterationsOffset to 0 find the union
+	for iter := maxIterationsOffset - 1; iter >= 0; iter-- {
+		if setGroup.indexProduceCounter>>6>>10 < uint64(iter) {
+			continue
+		}
+		indexOffset := setGroup.indexProduceCounter - uint64(iter)<<10<<6
+		limitIndex := 1023
+		if indexOffset < 1<<10<<6 {
+			limitIndex = int(indexOffset)>>6 + 1
+		}
+
+		for bitMapIndex := 0; bitMapIndex <= limitIndex; bitMapIndex++ {
+			itemIterBitMap := uint64(0)
+			for _, setMemberBitMap := range setKeysRelational {
+				if setMemberBitMap == nil || len(setMemberBitMap) < iter {
+					continue
+				}
+				itemIterBitMap |= setMemberBitMap[iter][bitMapIndex]
+			}
+
+			if itemIterBitMap > 0 {
+				for nBit := 0; nBit < 63; nBit++ {
+					if (itemIterBitMap>>nBit)&1 == 1 {
+						unionResult = append(unionResult, setGroup.indexMemberSlice[iter*(1<<16)+bitMapIndex*64+nBit].member)
+					}
+				}
+			}
+		}
+	}
+
+	return unionResult
+}
+
+// Different : Find the difference of a group set
+func (setGroup *setGroup) Different(setKeys ...interface{}) []interface{} {
+	setGroup.mutex.RLock()
+	defer setGroup.mutex.RUnlock()
+
+	setKeysLen := len(setKeys)
+	setKeysRelational := make([][][1024]uint64, setKeysLen-1)
+	var differentResult []interface{}
+	var iterationsOffset int
+	var bootstrapSetBitMap [][1024]uint64
+	for setKeyIndex, setKey := range setKeys {
+		// judgment the set exists, if not, return []interface{}{}
+		setMemberBitMap, setExist := setGroup.groupSetRelationalMap[setKey]
+		if !setExist || setMemberBitMap == nil || len(setMemberBitMap) == 0 {
+			if setKeyIndex == 0 {
+				return differentResult
+			}
+			continue
+		}
+		if setKeyIndex == 0 {
+			iterationsOffset = len(setMemberBitMap)
+			bootstrapSetBitMap = setMemberBitMap
+			continue
+		}
+
+		setKeysRelational[setKeyIndex-1] = setMemberBitMap
+	}
+
+	// iterate from minIterationsOffset to 0 find the intersection
+	for iter := iterationsOffset - 1; iter >= 0; iter-- {
+		if setGroup.indexProduceCounter>>6>>10 < uint64(iter) {
+			continue
+		}
+		indexOffset := setGroup.indexProduceCounter - uint64(iter)<<10<<6
+		bitMapIndex := 1023
+		if indexOffset < 1<<10<<6 {
+			bitMapIndex = int(indexOffset)>>6 + 1
+		}
+		for ; bitMapIndex >= 0; bitMapIndex-- {
+			itemIterBitMap := bootstrapSetBitMap[iter][bitMapIndex]
+			for _, setMemberBitMap := range setKeysRelational {
+				itemIterBitMap &= ^setMemberBitMap[iter][bitMapIndex]
+				if itemIterBitMap == 0 {
+					break
+				}
+			}
+			if itemIterBitMap > 0 {
+				for nBit := 0; nBit < 63; nBit++ {
+					if (itemIterBitMap>>nBit)&1 == 1 {
+						differentResult = append(differentResult, setGroup.indexMemberSlice[iter*(1<<16)+bitMapIndex*64+nBit].member)
+					}
+				}
+			}
+		}
+	}
+
+	return differentResult
 }
 
 //IsSetKey determine if setKey exists
